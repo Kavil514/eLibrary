@@ -1,3 +1,6 @@
+from crypt import methods
+from functools import wraps
+from urllib import response
 from flask import Flask, jsonify, render_template, send_from_directory, request
 from apispec import APISpec
 from apispec.ext.marshmallow import MarshmallowPlugin
@@ -5,6 +8,7 @@ from apispec_webframeworks.flask import FlaskPlugin
 from flask_pymongo import PyMongo
 from werkzeug.security import generate_password_hash, check_password_hash
 from marshmallow import Schema, fields
+import jwt
 
 app = Flask(__name__, template_folder="swagger/templates")
 
@@ -47,7 +51,24 @@ def swagger_docs(path=None):
 def index():
     return """ <h1> Welcome to E-Library </h1> """
 
-# Routes
+# Authentication
+
+
+def tokenReq(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "Authorization" in request.headers:
+            token = request.headers["Authorization"]
+            try:
+                jwt.decode(token, app.secret_key)
+            except:
+                return jsonify({"status": "fail", "message": "unauthorized"}), 401
+            return f(*args, **kwargs)
+        else:
+            return jsonify({"status": "fail", "message": "unauthorized"}), 401
+    return decorated
+
+# Schema
 
 
 class SignupRequestSchema(Schema):
@@ -59,6 +80,16 @@ class SignupRequestSchema(Schema):
 class SignupResponseSchema(Schema):
     message = fields.Str()
 
+
+class SigninRequestSchema(Schema):
+    email = fields.Email()
+    password = fields.Str()
+
+
+class SigninResponseSchema(Schema):
+    message = fields.Str()
+
+# Routes
 
 @app.route('/signup', methods=['POST'])
 def signup():
@@ -97,7 +128,6 @@ def signup():
     try:
         data = request.get_json()
         check = mongo.db.users.find_one({"email": data['email']})
-        # .find({"email": data['email']})
 
         if check:
             resp = jsonify("user with that email exists")
@@ -111,6 +141,7 @@ def signup():
             resp = jsonify("User added successfully")
             resp.status_code = 200
             return resp
+
         else:
             return not_found()
 
@@ -122,8 +153,78 @@ def signup():
         return jsonify(message), 200
 
 
+@app.route('/sigin', methods=['POST'])
+def sigin():
+    """Signin user
+        ---
+        post:
+            description: Signin a user
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: SigninRequestSchema
+            responses: 
+                200:
+                    description: Return success message
+                    content:     
+                        application/json:
+                            schema: SigninResponseSchema
+                401:
+                    description: Invalid Credentials
+                    content:
+                        application/json:
+                            schema: SigninResponseSchema
+                500:
+                    description: Server Error
+                    content:
+                        application/json:
+                            schema: SigninResponseSchema             
+
+    """
+    try:
+        data = request.get_json()
+        user = mongo.db.users.find_one({"email": data["email"]})
+
+        if user:
+            user['_id'] = str(user['_id'])
+            if user and check_password_hash(user['password'], data['password']):
+                token = jwt.encode({
+                    "user": {
+                        "email": f"{user['email']}",
+                        "id": f"{user['_id']}",
+                    }
+                }, app.secret_key)
+
+                del user['password']
+
+                resp = jsonify("User authenticated")
+                resp.status_code = 200
+                resp.status = "success"
+                resp_data = {"token": token}
+
+            else:
+                resp = jsonify("wrong password")
+                resp.status_code = 401
+                resp.status = "fail"
+                resp_data = None
+        else:
+            resp = jsonify("invalid login details")
+            resp.status_code = 401
+            resp.status = "fail"
+            resp_data = None
+
+    except Exception as ex:
+        resp = jsonify(ex)
+        resp.status_code = 500
+        resp.status = "fail"
+        resp_data = None
+    return resp, resp_data
+
+
 with app.test_request_context():
     spec.path(view=signup)
+    spec.path(view=sigin)
 
 
 @app.errorhandler(404)
