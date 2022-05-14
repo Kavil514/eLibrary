@@ -1,14 +1,23 @@
-from flask import Flask, jsonify, render_template, send_from_directory
+from flask import Flask, jsonify, render_template, send_from_directory, request
 from apispec import APISpec
 from apispec.ext.marshmallow import MarshmallowPlugin
 from apispec_webframeworks.flask import FlaskPlugin
+from flask_pymongo import PyMongo
+from werkzeug.security import generate_password_hash, check_password_hash
 from marshmallow import Schema, fields
 
 app = Flask(__name__, template_folder="swagger/templates")
 
-@app.route('/')
-def index():
-    return """ <h1> Welcome to E-Library </h1> """
+app.secret_key = "secretkey"
+
+#MongoDB
+try:
+    app.config['MONGO_URI'] = "mongodb://localhost:27017/eLibrary"
+    mongo = PyMongo(app)
+except:
+    print("Error: Cannot connect to MongoDb")
+
+#Swagger
 
 spec = APISpec(
     title="eLibrary",
@@ -29,31 +38,68 @@ def swagger_docs(path=None):
     else:
         return send_from_directory("./swagger/static", path)  
 
-# class SignupUserSchema(Schema):
-#     userId = fields.Int()
-#     name = fields.Str()
-#     email = fields.Email()
-#     password = fields.Str()
+#WelcomePage
 
-# class SignInSchema(Schema):
-#     email = fields.Email()
-#     password = fields.Str()
+@app.route('/')
+def index():
+    return """ <h1> Welcome to E-Library </h1> """    
 
-# class UpdateUserSchema(Schema):
-#     name = fields.Str()
-#     email = fields.Email()
-#     password = fields.Str()
+#Routes
+class SignupRequestSchema(Schema):
+    name = fields.Str()
+    email = fields.Email()
+    password = fields.Str()
 
-# class AllUsersSchema():
-#     users = fields.List(fields.Nested(SignupUserSchema))
+class SignupResponseSchema(Schema):
+    message = fields.Str()    
 
-# class AddBooksSchema():
-#     bookId = fields.Int()
-#     title = fields.Str()
-#     author = fields.Str()
 
-# class ListingBooksSchema():
-#     books = fields.List(fields.Nested(AddBooksSchema))
+@app.route('/signup', methods=['POST'])
+def signup():
+    """Signup user
+        ---
+        post:
+            description: Signup a user
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: SignupRequestSchema
+            responses: 
+                200:
+                    description: Return success message
+                    content:     
+                        application/json:
+                            schema: SignupResponseSchema
+
+    """
+    _json = request.json
+    _name = _json['name']
+    _email = _json['email']
+    _password = _json['password']
+
+    if _name and _email and _password and request.method == 'POST':
+        _hased_password  = generate_password_hash(_password)
+        id = mongo.db.users.insert_one({'name':_name, 'email':_email, 'password':_hased_password})
+        resp = jsonify("User added successfully")
+        resp.status_code = 200
+        return resp, SignupResponseSchema().dump({'message': "User registered successfully"})
+    else:
+        return not_found()
+
+with app.test_request_context():
+    spec.path(view=signup)
+
+
+@app.errorhandler(404)
+def not_found(err = None):
+    message = {
+        'status': 404,
+        'message': 'Not Found' + request.url
+    }
+    resp = jsonify(message)
+    resp.status_code = 404
+    return resp        
 
 if __name__ == '__main__' :
     app.run(debug=True, host="127.0.0.1", port=5000)
