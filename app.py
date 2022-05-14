@@ -10,14 +10,14 @@ app = Flask(__name__, template_folder="swagger/templates")
 
 app.secret_key = "secretkey"
 
-#MongoDB
+# MongoDB
 try:
     app.config['MONGO_URI'] = "mongodb://localhost:27017/eLibrary"
     mongo = PyMongo(app)
 except:
     print("Error: Cannot connect to MongoDb")
 
-#Swagger
+# Swagger
 
 spec = APISpec(
     title="eLibrary",
@@ -26,32 +26,38 @@ spec = APISpec(
     plugins=[FlaskPlugin(), MarshmallowPlugin()],
 )
 
+
 @app.route('/api/swagger.json')
 def create_swagger_spec():
     return jsonify(spec.to_dict())
+
 
 @app.route('/docs')
 @app.route('/docs/<path:path>')
 def swagger_docs(path=None):
     if not path or path == 'index.html':
-        return render_template('index.html',base_url = '/docs')
+        return render_template('index.html', base_url='/docs')
     else:
-        return send_from_directory("./swagger/static", path)  
+        return send_from_directory("./swagger/static", path)
 
-#WelcomePage
+# WelcomePage
+
 
 @app.route('/')
 def index():
-    return """ <h1> Welcome to E-Library </h1> """    
+    return """ <h1> Welcome to E-Library </h1> """
 
-#Routes
+# Routes
+
+
 class SignupRequestSchema(Schema):
     name = fields.Str()
     email = fields.Email()
     password = fields.Str()
 
+
 class SignupResponseSchema(Schema):
-    message = fields.Str()    
+    message = fields.Str()
 
 
 @app.route('/signup', methods=['POST'])
@@ -71,6 +77,16 @@ def signup():
                     content:     
                         application/json:
                             schema: SignupResponseSchema
+                401:
+                    description: Duplicate email
+                    content:
+                        application/json:
+                            schema: SignupResponseSchema
+                500:
+                    description: Server Error
+                    content:
+                        application/json:
+                            schema: SignupResponseSchema             
 
     """
     _json = request.json
@@ -78,28 +94,48 @@ def signup():
     _email = _json['email']
     _password = _json['password']
 
-    if _name and _email and _password and request.method == 'POST':
-        _hased_password  = generate_password_hash(_password)
-        id = mongo.db.users.insert_one({'name':_name, 'email':_email, 'password':_hased_password})
-        resp = jsonify("User added successfully")
-        resp.status_code = 200
-        return resp, SignupResponseSchema().dump({'message': "User registered successfully"})
-    else:
-        return not_found()
+    try:
+        data = request.get_json()
+        check = mongo.db.users.find_one({"email": data['email']})
+        # .find({"email": data['email']})
+
+        if check:
+            resp = jsonify("user with that email exists")
+            resp.status_code = 401
+            return resp
+
+        elif _name and _email and _password and request.method == 'POST':
+            _hased_password = generate_password_hash(_password)
+            id = mongo.db.users.insert_one(
+                {'name': _name, 'email': _email, 'password': _hased_password})
+            resp = jsonify("User added successfully")
+            resp.status_code = 200
+            return resp
+        else:
+            return not_found()
+
+    except Exception as ex:
+        message = {
+            'status': 500,
+            'message': 'Server Error' + request.url
+        }
+        return jsonify(message), 200
+
 
 with app.test_request_context():
     spec.path(view=signup)
 
 
 @app.errorhandler(404)
-def not_found(err = None):
+def not_found(err=None):
     message = {
         'status': 404,
         'message': 'Not Found' + request.url
     }
     resp = jsonify(message)
     resp.status_code = 404
-    return resp        
+    return resp
 
-if __name__ == '__main__' :
+
+if __name__ == '__main__':
     app.run(debug=True, host="127.0.0.1", port=5000)
