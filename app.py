@@ -1,4 +1,5 @@
 from crypt import methods
+from datetime import datetime, timedelta
 from functools import wraps
 from bson.objectid import ObjectId
 from flask import Flask, jsonify, render_template, send_from_directory, request
@@ -6,6 +7,7 @@ from apispec import APISpec
 from apispec.ext.marshmallow import MarshmallowPlugin
 from apispec_webframeworks.flask import FlaskPlugin
 from flask_pymongo import PyMongo
+from pkg_resources import require
 from werkzeug.security import generate_password_hash, check_password_hash
 from marshmallow import Schema, fields
 import json
@@ -63,6 +65,7 @@ def index():
 
 
 # JWT AUTH
+expirationTime = (datetime.now()+timedelta(minutes=5))
 jwt_scheme = {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
 spec.components.security_scheme("Authorization", jwt_scheme)
 
@@ -203,7 +206,8 @@ def signinUser():
                     "user": {
                         "email": f"{user['email']}",
                         "id": f"{user['_id']}",
-                    }
+                    },
+                    "exp": expirationTime
                 }, app.secret_key)
 
                 del user['password']
@@ -304,7 +308,7 @@ def updateUser():
         else:
             not_found()
 
-    except Exception as ee:
+    except (Exception, jwt.ExpiredSignatureError) as ee:
         message = str(ee)
         status = "Error"
 
@@ -366,7 +370,7 @@ def deleteUser():
         else:
             not_found()
 
-    except Exception as ee:
+    except (Exception, jwt.ExpiredSignatureError) as ee:
         message = str(ee)
         status = "Error"
 
@@ -438,7 +442,7 @@ def addBook():
         else:
             not_found()
 
-    except Exception as ee:
+    except (Exception, jwt.ExpiredSignatureError) as ee:
         message = str(ee)
         status = "Error"
 
@@ -491,7 +495,7 @@ def removeBook(book_id):
             status = "fail"
             code = 404
 
-    except Exception as ee:
+    except (Exception, jwt.ExpiredSignatureError) as ee:
         message = str(ee)
         status = "Error"
 
@@ -544,7 +548,7 @@ def removeBookTemp(book_id):
             status = "fail"
             code = 404
 
-    except Exception as ee:
+    except (Exception, jwt.ExpiredSignatureError) as ee:
         message = str(ee)
         status = "Error"
 
@@ -592,7 +596,7 @@ def allBooks():
             message = "No Books available"
             status = "fail"
             code = 404
-    except Exception as ee:
+    except (Exception, jwt.ExpiredSignatureError) as ee:
         message = str(ee)
         status = "Error"
 
