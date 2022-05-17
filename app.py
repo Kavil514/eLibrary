@@ -1,15 +1,17 @@
 from crypt import methods
 from functools import wraps
-import bson
-from bson import ObjectId
+from bson.objectid import ObjectId
 from flask import Flask, jsonify, render_template, send_from_directory, request
 from apispec import APISpec
 from apispec.ext.marshmallow import MarshmallowPlugin
 from apispec_webframeworks.flask import FlaskPlugin
 from flask_pymongo import PyMongo
 from werkzeug.security import generate_password_hash, check_password_hash
-from marshmallow import Schema, ValidationError, fields, missing
+from marshmallow import Schema, fields
+import json
+from bson import ObjectId
 import jwt
+# import json
 
 app = Flask(__name__, template_folder="swagger/templates")
 
@@ -45,6 +47,13 @@ def swagger_docs(path=None):
     else:
         return send_from_directory("./swagger/static", path)
 
+
+# JSON ENCODER
+class JSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, ObjectId):
+            return str(o)
+        return json.JSONEncoder.default(self, o)
 # WelcomePage
 
 
@@ -80,12 +89,8 @@ class BookSchema(Schema):
     author = fields.Str()
 
 
-class DeleteABookSchema(Schema):
-    book_id = fields.Str()
-
-
 class BookAvailabilitySchema(Schema):
-    book_id = fields.Str()
+    id = fields.Str()
 
 # Routes
 # USERS
@@ -370,7 +375,7 @@ def deleteUser():
 # BOOKS
 
 
-@app.route('/add-book', methods=['POST'])
+@app.route('/books/add-book', methods=['POST'])
 def addBook():
     """Add a Book
         ---
@@ -420,7 +425,6 @@ def addBook():
     try:
         if (request.method == 'POST'):
             user_id = loggedInUser['user']['id']
-            print(user_id)
             res = mongo.db.books.insert_one(
                 {"bookName": _bookName, "author": _author, "user_id": user_id, "availability": "available"})
             if res.acknowledged:
@@ -441,7 +445,7 @@ def addBook():
     return jsonify({"status": status, "message": message}), code
 
 
-@app.route('/delete-book/<book_id>', methods=['DELETE'])
+@app.route('/books/<book_id>', methods=['DELETE'])
 def removeBook(book_id):
     """Remove a Book
         ---
@@ -449,11 +453,6 @@ def removeBook(book_id):
             description: Remove a Book
             security:
                 - Authorization: []
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema: DeleteABookSchema
             responses: 
                 201:
                     description: Return success message
@@ -478,11 +477,9 @@ def removeBook(book_id):
     status = "fail"
     try:
         if (request.method == 'DELETE'):
-            print(ObjectId(book_id))
-            # data = mongo.db.books.find_one({"_id": ObjectId(book_id)})
             res = mongo.db.books.delete_one({"_id": ObjectId(book_id)})
             if res:
-                message = "Delete successfully"
+                message = "Deleted successfully"
                 status = "successful"
                 code = 201
             else:
@@ -501,7 +498,7 @@ def removeBook(book_id):
     return jsonify({"status": status, "message": message, 'data': data}), code
 
 
-@app.route('/temporary-remove-book/<book_id>', methods=['PUT'])
+@app.route('/books/mark-unavailable/<book_id>', methods=['PUT'])
 def removeBookTemp(book_id):
     """Remove a Book Temporarily
         ---
@@ -509,11 +506,6 @@ def removeBookTemp(book_id):
             description: Make book Unavailable
             security:
                 - Authorization: []
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema: BookAvailabilitySchema
             responses: 
                 201:
                     description: Return success message
@@ -559,6 +551,54 @@ def removeBookTemp(book_id):
     return jsonify({"status": status, "message": message}), code
 
 
+@app.route("/books/all", methods=['GET'])
+def allBooks():
+    """GET all books
+        ---
+        get:
+            description: List of all available books
+            security:
+                - Authorization: []
+            responses: 
+                201:
+                    description: Return success message
+                    content:     
+                        application/json:
+                            schema: BookSchema
+                404:
+                    description: Reteriving books failed
+                    content:
+                        application/json:
+                            schema: MessageSchema
+                500:
+                    description: Server Error
+                    content:
+                        application/json:
+                            schema: MessageSchema             
+    """
+    data = []
+    code = 500
+    message = ""
+    status = "fail"
+    try:
+        filter = {"availability": "available"}
+        for book in mongo.db.books.find(filter):
+            data.append(BookSchema().dump(book))
+        if data:
+            message = "Retrieved all available books"
+            status = "successful"
+            code = 201
+        else:
+            message = "No Books available"
+            status = "fail"
+            code = 404
+    except Exception as ee:
+        message = str(ee)
+        status = "Error"
+
+    return jsonify({"status": status, "message": message, "data": data}), code
+
+
 with app.test_request_context():
     spec.path(view=signupUser)
     spec.path(view=signinUser)
@@ -567,6 +607,7 @@ with app.test_request_context():
     spec.path(view=addBook)
     spec.path(view=removeBook)
     spec.path(view=removeBookTemp)
+    spec.path(view=allBooks)
 
 
 @app.errorhandler(404)
