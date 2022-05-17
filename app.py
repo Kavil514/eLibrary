@@ -1,4 +1,3 @@
-from crypt import methods
 from datetime import datetime, timedelta
 from functools import wraps
 from bson.objectid import ObjectId
@@ -13,7 +12,6 @@ from marshmallow import Schema, fields
 import json
 from bson import ObjectId
 import jwt
-# import json
 
 app = Flask(__name__, template_folder="swagger/templates")
 
@@ -27,7 +25,6 @@ except:
     print("Error: Cannot connect to MongoDb")
 
 # Swagger
-
 spec = APISpec(
     title="eLibrary",
     version='1.0.0',
@@ -35,11 +32,9 @@ spec = APISpec(
     plugins=[FlaskPlugin(), MarshmallowPlugin()],
 )
 
-
 @app.route('/api/swagger.json')
 def create_swagger_spec():
     return jsonify(spec.to_dict())
-
 
 @app.route('/docs')
 @app.route('/docs/<path:path>')
@@ -49,16 +44,7 @@ def swagger_docs(path=None):
     else:
         return send_from_directory("./swagger/static", path)
 
-
-# JSON ENCODER
-class JSONEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, ObjectId):
-            return str(o)
-        return json.JSONEncoder.default(self, o)
 # WelcomePage
-
-
 @app.route('/')
 def index():
     return """ <h1> Welcome to E-Library </h1> """
@@ -70,35 +56,23 @@ jwt_scheme = {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
 spec.components.security_scheme("Authorization", jwt_scheme)
 
 # Schema
-
-
 class SignupRequestSchema(Schema):
     name = fields.Str()
     email = fields.Email()
     password = fields.Str()
 
-
 class MessageSchema(Schema):
     message = fields.Str()
-
 
 class SigninRequestSchema(Schema):
     email = fields.Email()
     password = fields.Str()
 
-
 class BookSchema(Schema):
     bookName = fields.Str()
     author = fields.Str()
 
-
-class BookAvailabilitySchema(Schema):
-    id = fields.Str()
-
 # Routes
-# USERS
-
-
 @app.route('/user/signup', methods=['POST'])
 def signupUser():
     """Signup user
@@ -448,7 +422,6 @@ def addBook():
 
     return jsonify({"status": status, "message": message}), code
 
-
 @app.route('/books/<book_id>', methods=['DELETE'])
 def removeBook(book_id):
     """Remove a Book
@@ -501,7 +474,6 @@ def removeBook(book_id):
 
     return jsonify({"status": status, "message": message, 'data': data}), code
 
-
 @app.route('/books/mark-unavailable/<book_id>', methods=['PUT'])
 def removeBookTemp(book_id):
     """Remove a Book Temporarily
@@ -553,7 +525,6 @@ def removeBookTemp(book_id):
         status = "Error"
 
     return jsonify({"status": status, "message": message}), code
-
 
 @app.route("/books/all", methods=['GET'])
 def allBooks():
