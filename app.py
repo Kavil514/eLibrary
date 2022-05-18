@@ -1,15 +1,14 @@
 from datetime import datetime, timedelta
-from functools import wraps
+from operator import lt
 from bson.objectid import ObjectId
 from flask import Flask, jsonify, render_template, send_from_directory, request
 from apispec import APISpec
 from apispec.ext.marshmallow import MarshmallowPlugin
 from apispec_webframeworks.flask import FlaskPlugin
 from flask_pymongo import PyMongo
-from pkg_resources import require
+from pyrsistent import inc
 from werkzeug.security import generate_password_hash, check_password_hash
 from marshmallow import Schema, fields
-import json
 from bson import ObjectId
 import jwt
 
@@ -32,9 +31,11 @@ spec = APISpec(
     plugins=[FlaskPlugin(), MarshmallowPlugin()],
 )
 
+
 @app.route('/api/swagger.json')
 def create_swagger_spec():
     return jsonify(spec.to_dict())
+
 
 @app.route('/docs')
 @app.route('/docs/<path:path>')
@@ -45,34 +46,47 @@ def swagger_docs(path=None):
         return send_from_directory("./swagger/static", path)
 
 # WelcomePage
+
+
 @app.route('/')
 def index():
     return """ <h1> Welcome to E-Library </h1> """
 
 
 # JWT AUTH
-expirationTime = (datetime.now()+timedelta(minutes=5))
 jwt_scheme = {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
 spec.components.security_scheme("Authorization", jwt_scheme)
 
 # Schema
+
+
 class SignupRequestSchema(Schema):
     name = fields.Str()
     email = fields.Email()
     password = fields.Str()
 
+
 class MessageSchema(Schema):
     message = fields.Str()
+
 
 class SigninRequestSchema(Schema):
     email = fields.Email()
     password = fields.Str()
 
+
 class BookSchema(Schema):
     bookName = fields.Str()
     author = fields.Str()
 
+
+class BorrowBookSchema(Schema):
+    bookName = fields.Str()
+    borrowingDays = fields.Int()
+
 # Routes
+
+
 @app.route('/user/signup', methods=['POST'])
 def signupUser():
     """Signup user
@@ -122,7 +136,7 @@ def signupUser():
         else:
             _hased_password = generate_password_hash(_password)
             id = mongo.db.users.insert_one(
-                {'name': _name, 'email': _email, 'password': _hased_password})
+                {'name': _name, 'email': _email, 'password': _hased_password, 'numberOfBooksBorrowed': 0})
             if id.acknowledged:
                 status = "successful"
                 message = "user created successfully"
@@ -181,7 +195,7 @@ def signinUser():
                         "email": f"{user['email']}",
                         "id": f"{user['_id']}",
                     },
-                    "exp": expirationTime
+                    "exp": datetime.utcnow() + timedelta(minutes=20)
                 }, app.secret_key)
 
                 del user['password']
@@ -390,6 +404,9 @@ def addBook():
     code = 500
     message = ""
     status = "fail"
+    listedDate = str(datetime.date(datetime.now()))
+    borrowDate = None
+    availabilityDate = None
     if "Authorization" in request.headers:
         token = request.headers["Authorization"][7:]
         try:
@@ -404,7 +421,7 @@ def addBook():
         if (request.method == 'POST'):
             user_id = loggedInUser['user']['id']
             res = mongo.db.books.insert_one(
-                {"bookName": _bookName, "author": _author, "user_id": user_id, "availability": "available"})
+                {"bookName": _bookName, "author": _author, "user_id": user_id, "availability": "available", "listedDate": listedDate, "borrowDate": borrowDate, "availabilityDate": availabilityDate})
             if res.acknowledged:
                 message = "Book added successfully"
                 status = "successful"
@@ -421,6 +438,7 @@ def addBook():
         status = "Error"
 
     return jsonify({"status": status, "message": message}), code
+
 
 @app.route('/books/<book_id>', methods=['DELETE'])
 def removeBook(book_id):
@@ -474,6 +492,7 @@ def removeBook(book_id):
 
     return jsonify({"status": status, "message": message, 'data': data}), code
 
+
 @app.route('/books/mark-unavailable/<book_id>', methods=['PUT'])
 def removeBookTemp(book_id):
     """Remove a Book Temporarily
@@ -526,6 +545,7 @@ def removeBookTemp(book_id):
 
     return jsonify({"status": status, "message": message}), code
 
+
 @app.route("/books/all", methods=['GET'])
 def allBooks():
     """GET all books
@@ -574,6 +594,93 @@ def allBooks():
     return jsonify({"status": status, "message": message, "data": data}), code
 
 
+@app.route("/books/borrow", methods=['POST'])
+def borrowBooks():
+    """Borrow Book
+        ---
+        post:
+            description: Borrow a Book
+            security:
+                - Authorization: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: BorrowBookSchema
+            responses: 
+                201:
+                    description: Return success message
+                    content:     
+                        application/json:
+                            schema: MessageSchema
+                401:
+                    description: Book is not available to borrow
+                    content:
+                        application/json:
+                            schema: MessageSchema
+                500:
+                    description: Server Error
+                    content:
+                        application/json:
+                            schema: MessageSchema             
+    """
+    _json = request.json
+    _bookName = _json['bookName']
+    _borrowingDays = _json['borrowingDays']
+    code = 500
+    message = ""
+    status = "fail"
+    if "Authorization" in request.headers:
+        token = request.headers["Authorization"][7:]
+        try:
+            loggedInUser = jwt.decode(
+                token, app.secret_key, algorithms=["HS256"])
+        except:
+            return jsonify({"status": "fail", "message": "unauthorized"}), 401
+    else:
+        return jsonify({"status": "fail", "message": "unauthorized"}), 401
+    try:
+        user_id = loggedInUser['user']['id']
+        if request.method == 'POST':
+            isBookAvailable = mongo.db.books.find_one(
+                {"bookName": _bookName, "availability": "available"})
+            numberOfBorrowedBooks = mongo.db.users.find_one(
+                {"_id": ObjectId(user_id), "numberOfBooksBorrowed": {"$lt": 3}})
+            if isBookAvailable:
+                if 1 <= _borrowingDays <= 30:
+                    if numberOfBorrowedBooks:
+                        res = mongo.db.books.find_one_and_update({"bookName": _bookName}, {"$set": {"availability": "not available", "borrowDate": str(datetime.date(datetime.now())), "availabilityDate": str(datetime.date(datetime.now())+timedelta(days=_borrowingDays))}})
+                        userRes = mongo.db.users.find_one_and_update(
+                            {"_id": ObjectId(user_id)}, {"$inc": {"numberOfBooksBorrowed": 1}})
+                        if res and userRes:
+                            message = "Book Borrowed successfully"
+                            status = "successful"
+                            code = 201
+                        else:
+                            message = "Book Borrowing failed"
+                            status = "fail"
+                            code = 404
+                    else:
+                        message = "Book Borrowing failed - user has already borrowed maximum (3) books"
+                        status = "fail"
+                        code = 404
+                else:
+                    message = "Book Borrowing failed - user can borrow only for minimum of 1 days or maximaum of 30 days"
+                    status = "fail"
+                    code = 404
+            else:
+                message = "Book Borrowing failed - Book is not available to borrow"
+                status = "fail"
+                code = 404
+        else:
+            not_found()
+    except (Exception, jwt.ExpiredSignatureError) as ee:
+        message = str(ee)
+        status = "Error"
+
+    return jsonify({"status": status, "message": message}), code
+
+
 with app.test_request_context():
     spec.path(view=signupUser)
     spec.path(view=signinUser)
@@ -583,6 +690,7 @@ with app.test_request_context():
     spec.path(view=removeBook)
     spec.path(view=removeBookTemp)
     spec.path(view=allBooks)
+    spec.path(view=borrowBooks)
 
 
 @app.errorhandler(404)
