@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from operator import lt
 from bson.objectid import ObjectId
 from flask import Flask, jsonify, render_template, send_from_directory, request
@@ -641,15 +641,23 @@ def borrowBooks():
         return jsonify({"status": "fail", "message": "unauthorized"}), 401
     try:
         user_id = loggedInUser['user']['id']
+        bookMatch = mongo.db.books.find_one({"bookName": _bookName})
+        isBookAvailable = mongo.db.books.find_one(
+            {"bookName": _bookName, "availability": "available"})
+        numberOfBorrowedBooks = mongo.db.users.find_one(
+            {"_id": ObjectId(user_id), "numberOfBooksBorrowed": {"$lt": 3}})
+        bookAvialableDate = datetime.strptime(
+            bookMatch["availabilityDate"], '%Y-%m-%d')
+        dueDays = ((datetime.now().date()) - bookAvialableDate.date()).days
+        if dueDays > 0:
+            res = mongo.db.books.find_one_and_update({"bookName": _bookName}, {"$set": {
+                                                     "availability": "available", "borrowDate": None, "availabilityDate": None}})
         if request.method == 'POST':
-            isBookAvailable = mongo.db.books.find_one(
-                {"bookName": _bookName, "availability": "available"})
-            numberOfBorrowedBooks = mongo.db.users.find_one(
-                {"_id": ObjectId(user_id), "numberOfBooksBorrowed": {"$lt": 3}})
-            if isBookAvailable:
+            if isBookAvailable or dueDays > 0:
                 if 1 <= _borrowingDays <= 30:
                     if numberOfBorrowedBooks:
-                        res = mongo.db.books.find_one_and_update({"bookName": _bookName}, {"$set": {"availability": "not available", "borrowDate": str(datetime.date(datetime.now())), "availabilityDate": str(datetime.date(datetime.now())+timedelta(days=_borrowingDays))}})
+                        res = mongo.db.books.find_one_and_update({"bookName": _bookName}, {"$set": {"availability": "not available", "borrowDate": str(
+                            datetime.date(datetime.now())), "availabilityDate": str(datetime.date(datetime.now())+timedelta(days=_borrowingDays))}})
                         userRes = mongo.db.users.find_one_and_update(
                             {"_id": ObjectId(user_id)}, {"$inc": {"numberOfBooksBorrowed": 1}})
                         if res and userRes:
@@ -661,7 +669,7 @@ def borrowBooks():
                             status = "fail"
                             code = 404
                     else:
-                        message = "Book Borrowing failed - user has already borrowed maximum (3) books"
+                        message = "Book Borrowing failed - You have already borrowed maximum (3) books"
                         status = "fail"
                         code = 404
                 else:
@@ -669,11 +677,12 @@ def borrowBooks():
                     status = "fail"
                     code = 404
             else:
-                message = "Book Borrowing failed - Book is not available to borrow"
+                message = f"Book Borrowing failed - {_bookName} is not available to borrow for {abs(dueDays)} next days"
                 status = "fail"
                 code = 404
         else:
             not_found()
+
     except (Exception, jwt.ExpiredSignatureError) as ee:
         message = str(ee)
         status = "Error"
