@@ -11,6 +11,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from marshmallow import Schema, fields
 from bson import ObjectId
 import jwt
+import re
 
 app = Flask(__name__, template_folder="swagger/templates")
 
@@ -84,6 +85,11 @@ class BorrowBookSchema(Schema):
     bookName = fields.Str()
     borrowingDays = fields.Int()
 
+
+# Regular Exp
+namePattern = re.compile(r"[a-zA-z]{3,}")
+emailPattern = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+passwordPattern = re.compile(r"[A-Za-z0-9@#$%^&+=]{8,}")
 # Routes
 
 
@@ -134,13 +140,31 @@ def signupUser():
             status = "fail"
 
         else:
-            _hased_password = generate_password_hash(_password)
-            id = mongo.db.users.insert_one(
-                {'name': _name, 'email': _email, 'password': _hased_password, 'numberOfBooksBorrowed': 0})
-            if id.acknowledged:
-                status = "successful"
-                message = "user created successfully"
-                code = 201
+            if re.match(namePattern, _name):
+                if re.match(emailPattern, _email):
+                    if re.match(passwordPattern, _password):
+                        _hased_password = generate_password_hash(_password)
+                        id = mongo.db.users.insert_one({'name': _name, 'email': _email, 'password': _hased_password, 'numberOfBooksBorrowed': 0})    
+                        if id.acknowledged:
+                            status = "successful"
+                            message = "user created successfully"
+                            code = 201
+                        else:
+                            status = "fail"
+                            message = "Something went wrong"
+                            code = 401
+                    else:
+                        status = "successful"
+                        message = "Please check password - password must contain minimum 8 letters and only alphabets, numbers, @, #, $, %, ^, &, +, = can be present"
+                        code = 401
+                else:
+                    status = "fail"
+                    message = "Please check email - email format is incorrect [abc@xyz.com]"
+                    code = 401
+            else:
+                status = "fail"
+                message = "name should be minimum of 3 letters and cannot contain numbers"
+                code = 401                            
 
     except Exception as ex:
         message = f"{ex}"
